@@ -235,8 +235,27 @@ fn shared_event_context(
         _ => None,
     };
     let client_id = match event {
-        Event::PaneUpdate(..) | Event::CwdChanged(..) | Event::Timer(..) => None,
-        _ => client_id,
+        Event::ModeUpdate(..)
+        | Event::TabUpdate(..)
+        | Event::InitialKeybinds(..)
+        | Event::Key(..)
+        | Event::Mouse(..)
+        | Event::MouseWithModifiers(..)
+        | Event::PastedText(..)
+        | Event::InterceptedKeyPress(..)
+        | Event::InputReceived
+        | Event::CopyToClipboard(..)
+        | Event::SystemClipboardFailure
+        | Event::ActionComplete(..)
+        | Event::HighlightClicked { .. }
+        | Event::HostTerminalThemeChanged(..)
+        | Event::SoftKeyboardVisibilityChanged(..)
+        | Event::HintText(..)
+        | Event::ActivePaneScroll(..)
+        | Event::ContextMenu(..)
+        | Event::SessionHistoryUpdate(..)
+        | Event::Visible(..) => client_id,
+        _ => None,
     };
     EventContext { slot_id, client_id }
 }
@@ -3814,3 +3833,60 @@ mod hover_merge_tests;
 #[cfg(test)]
 #[path = "unit/startup_tests.rs"]
 mod startup_tests;
+
+#[cfg(test)]
+mod shared_event_context_tests {
+    use super::*;
+    use zellij_utils::data::{FolderSessions, PermissionStatus, SessionCounts};
+
+    #[test]
+    fn shared_event_context_strips_client_id_from_instance_and_session_events() {
+        assert_eq!(
+            shared_event_context(
+                &Event::SessionCountsUpdate(SessionCounts::default()),
+                Some(10),
+                Some(1),
+            ),
+            EventContext {
+                slot_id: None,
+                client_id: None,
+            }
+        );
+        assert_eq!(
+            shared_event_context(
+                &Event::FolderSessionsUpdate(FolderSessions::default()),
+                Some(10),
+                Some(1),
+            ),
+            EventContext {
+                slot_id: None,
+                client_id: None,
+            }
+        );
+        assert_eq!(
+            shared_event_context(&Event::DesktopIntegration(String::new()), Some(10), Some(1)),
+            EventContext {
+                slot_id: None,
+                client_id: None,
+            }
+        );
+        assert_eq!(
+            shared_event_context(
+                &Event::PermissionRequestResult(PermissionStatus::Granted),
+                Some(10),
+                Some(1),
+            ),
+            EventContext {
+                slot_id: Some(10),
+                client_id: None,
+            }
+        );
+        assert_eq!(
+            shared_event_context(&Event::InputReceived, Some(10), Some(2)),
+            EventContext {
+                slot_id: None,
+                client_id: Some(2),
+            }
+        );
+    }
+}

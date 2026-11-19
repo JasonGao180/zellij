@@ -407,13 +407,16 @@ fn route_action_with_origin(
     if !action.is_mouse_action() {
         // mouse actions should only send InputReceived to plugins
         // if they do not result in text being marked, this is handled in Tab
-        senders
-            .send_to_plugin(PluginInstruction::Update(vec![(
-                None,
-                Some(client_id),
-                Event::InputReceived,
-            )]))
-            .with_context(err_context)?;
+        let is_unattached_cli_client = is_cli_client && cli_client_id == Some(client_id);
+        if !is_unattached_cli_client {
+            senders
+                .send_to_plugin(PluginInstruction::Update(vec![(
+                    None,
+                    Some(client_id),
+                    Event::InputReceived,
+                )]))
+                .with_context(err_context)?;
+        }
         if crate::session_suggestions::should_report_activity() {
             let _ = senders.send_to_background_jobs(BackgroundJob::SessionSuggestions(
                 crate::session_suggestions::SessionSuggestionsJob::Activity,
@@ -3228,11 +3231,11 @@ pub(crate) fn route_thread_main(
                                 // detach, etc.) for which using the cli client id will not be
                                 // doing the right thing - using the last_active_client is almost
                                 // certainly correct in almost all cases
+                                let session_state = session_state.read().unwrap();
                                 session_state
-                                    .read()
-                                    .unwrap()
                                     .get_last_active_client()
                                     .or(maybe_client_id)
+                                    .or_else(|| session_state.first_attached_client())
                                     .unwrap_or(client_id)
                             } else {
                                 maybe_client_id.unwrap_or(client_id)

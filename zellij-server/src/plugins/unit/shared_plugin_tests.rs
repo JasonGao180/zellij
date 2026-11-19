@@ -718,3 +718,30 @@ pub fn a_shared_plugin_reloaded_by_url_loses_its_settings_entry() {
     });
     teardown();
 }
+
+#[test]
+#[ignore]
+pub fn shared_plugin_ignores_events_for_unconnected_clients() {
+    let (sender, mut screen, teardown, _temp_folder) = start();
+    let client_id = 1;
+    let unconnected_cli_client_id = 999;
+    let _ = sender.send(PluginInstruction::AddClient(client_id));
+    load(&sender, shared_fixture(&[("label", "a")]), 0, client_id);
+    screen.wait_until("slot rendered for client 1", |renders| {
+        slots_of_client(renders, client_id).len() == 1
+    });
+    let slot_id = slots_of_client(&screen.renders, client_id)[0];
+    let _ = sender.send(PluginInstruction::Update(vec![
+        (Some(slot_id), Some(unconnected_cli_client_id), key_event()),
+        (Some(slot_id), Some(client_id), key_event()),
+    ]));
+    screen.wait_until("client 1 received its own key event", |renders| {
+        field(&renders[&(slot_id, client_id)], "keys") == format!("[(Some({}), Some(1))]", slot_id)
+    });
+    teardown();
+    assert_eq!(
+        field(&screen.renders[&(slot_id, client_id)], "keys"),
+        format!("[(Some({}), Some(1))]", slot_id),
+        "events for unconnected/ephemeral clients must not be delivered to shared plugins"
+    );
+}

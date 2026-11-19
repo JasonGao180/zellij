@@ -443,6 +443,18 @@ fn is_deduplicated_event(event_type: EventType) -> bool {
     )
 }
 
+fn should_deliver_event_for_client(
+    shared: Option<&crate::plugins::plugin_map::SharedEnv>,
+    client_id: Option<ClientId>,
+) -> bool {
+    match client_id {
+        None => true,
+        Some(client_id) => shared
+            .map(|shared| shared.clients.contains(&client_id))
+            .unwrap_or(false),
+    }
+}
+
 pub fn apply_events_job(
     senders: ThreadSenders,
     plugin_map: Arc<Mutex<PluginMap>>,
@@ -457,6 +469,12 @@ pub fn apply_events_job(
     let mut render = RenderResponse::Nothing;
     let strip_keybinds = subscriptions.contains(&EventType::InitialKeybinds);
     for (mut event, context, mut keybinds) in events {
+        if !should_deliver_event_for_client(
+            running_plugin.store.data().shared.as_ref(),
+            context.client_id,
+        ) {
+            continue;
+        }
         let Ok(event_type) = subscription_event_type(&event) else {
             continue;
         };
@@ -914,5 +932,16 @@ mod tests {
             b"not a wasm module",
             SHARED_MARKER_EXPORT
         ));
+    }
+
+    #[test]
+    fn skips_events_targeted_at_unconnected_clients() {
+        let mut shared = crate::plugins::plugin_map::SharedEnv::default();
+        shared.clients.insert(1);
+        assert!(should_deliver_event_for_client(Some(&shared), None));
+        assert!(should_deliver_event_for_client(Some(&shared), Some(1)));
+        assert!(!should_deliver_event_for_client(Some(&shared), Some(999)));
+        assert!(!should_deliver_event_for_client(None, Some(1)));
+        assert!(should_deliver_event_for_client(None, None));
     }
 }

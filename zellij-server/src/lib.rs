@@ -1594,6 +1594,14 @@ impl SessionState {
             .filter(|(client_id, data)| data.is_some() && !pipe_ids.contains(client_id))
             .count()
     }
+    pub fn first_attached_client(&self) -> Option<ClientId> {
+        let pipe_ids: HashSet<ClientId> = self.pipes.values().copied().collect();
+        self.clients
+            .iter()
+            .filter(|(client_id, data)| data.is_some() && !pipe_ids.contains(client_id))
+            .map(|(client_id, _)| *client_id)
+            .min()
+    }
     pub fn other_clients_are_attached(&self, client_id: ClientId) -> bool {
         let pipe_ids: HashSet<ClientId> = self.pipes.values().copied().collect();
         self.clients
@@ -1917,6 +1925,33 @@ mod session_state_tests {
             .pick_forward_target()
             .expect("some client still connected");
         assert!(picked == 1 || picked == 2);
+    }
+
+    #[test]
+    fn first_attached_client_ignores_transient_cli_and_pipe_clients() {
+        let mut s = SessionState::new();
+        // Transient CLI connection (no attached Size data)
+        let cli_id = s.new_client();
+        assert_eq!(s.first_attached_client(), None);
+
+        // Pipe client (even if it had data, pipes are excluded)
+        let pipe_id = s.new_client();
+        s.set_client_data(pipe_id, Size::default(), false);
+        s.associate_pipe_with_client("pipe-1".to_owned(), pipe_id);
+        assert_eq!(s.first_attached_client(), None);
+
+        // Watcher client is not in `clients`
+        let watcher_id = s.new_client();
+        s.convert_client_to_watcher(watcher_id, false);
+        assert_eq!(s.first_attached_client(), None);
+
+        // Attached interactive clients: picks the lowest attached client id
+        let attached_high = s.new_client();
+        let attached_low = cli_id;
+        s.set_client_data(attached_high, Size::default(), false);
+        assert_eq!(s.first_attached_client(), Some(attached_high));
+        s.set_client_data(attached_low, Size::default(), false);
+        assert_eq!(s.first_attached_client(), Some(attached_low));
     }
 
     #[test]
@@ -4051,6 +4086,15 @@ pub fn start_server_impl(
                     .as_ref()
                     .unwrap()
                     .senders
+                    .send_to_plugin(PluginInstruction::AddClient(client_id))
+                    .unwrap();
+
+                session_data
+                    .read()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .senders
                     .send_to_screen(ScreenInstruction::RecomputeTabSize(
                         client_id,
                         client_attributes.size,
@@ -4187,10 +4231,6 @@ pub fn start_server_impl(
                     );
                     session_data
                         .senders
-                        .send_to_plugin(PluginInstruction::AddClient(client_id))
-                        .unwrap();
-                    session_data
-                        .senders
                         .send_to_screen(ScreenInstruction::SetClientHostTerminalEnv(
                             client_id,
                             host_terminal_env,
@@ -4231,14 +4271,6 @@ pub fn start_server_impl(
                     .read()
                     .unwrap()
                     .other_clients_are_attached(client_id);
-                report_attached_client_history(
-                    &mut client_histories,
-                    &session_data.senders,
-                    client_id,
-                    cli_assets.switch_context.as_ref(),
-                    is_a_reattach && pane_id_to_focus.is_none(),
-                    last_detached_at_ms,
-                );
                 if cli_assets
                     .switch_context
                     .as_ref()
@@ -4292,6 +4324,18 @@ pub fn start_server_impl(
 
                 session_data
                     .senders
+                    .send_to_plugin(PluginInstruction::AddClient(client_id))
+                    .unwrap();
+                report_attached_client_history(
+                    &mut client_histories,
+                    &session_data.senders,
+                    client_id,
+                    cli_assets.switch_context.as_ref(),
+                    is_a_reattach && pane_id_to_focus.is_none(),
+                    last_detached_at_ms,
+                );
+                session_data
+                    .senders
                     .send_to_screen(ScreenInstruction::SetClientHostTerminalEnv(
                         client_id,
                         host_terminal_env,
@@ -4306,10 +4350,6 @@ pub fn start_server_impl(
                         tab_position_to_focus,
                         pane_id_to_focus,
                     ))
-                    .unwrap();
-                session_data
-                    .senders
-                    .send_to_plugin(PluginInstruction::AddClient(client_id))
                     .unwrap();
                 let client_configuration = session_data
                     .session_configuration
